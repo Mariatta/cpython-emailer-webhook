@@ -9,6 +9,9 @@ from aiohttp.helpers import sentinel
 from aiohttp import streams
 from aiohttp.test_utils import make_mocked_request
 
+import os
+os.environ["REDIS_URL"] = "someurl"
+
 import mailer
 
 
@@ -112,23 +115,27 @@ async def test_invalid_branch_name(loop):
         await event.process()
     assert str(exc.value) == 'Invalid branch name.'
 
+from unittest import mock
 
 async def test_send_email(loop):
     smtp = FakeSMTP(hostname='localhost', port=1025, loop=loop)
     client = aiohttp.ClientSession(loop=loop)
     request = make_request('POST', '/', data=data_with_commits, loop=loop)
     event = mailer.PushEvent(client, smtp, request)
-    resp = await event.process()
-    assert resp == 'Ok'
-    assert len(smtp.sent_mails) == 1
-    mail = smtp.sent_mails[0]
-    assert mail['From'] == 'Berker Peksag <sender@example.com>'
-    assert mail['To'] == 'recipient@example.com'
-    assert mail['Subject'] == 'Update .gitignore'
-    assert '(cherry picked from commit 9d9ed0e5cceef45fd63dc1f7b3fe6e695da16e83)' not in mail['Subject']
-    body = mail.get_body().as_string()
-    # TODO: We probably need a FakeDiff object to avoid making HTTP requests.
-    assert diff in body
+    with mock.patch("tasks.send_email_task.delay") as send_email_mock:
+        await event.process()
+        send_email_mock.assert_called_once()
+        assert send_email_mock.call_args[0][0] == smtp
+
+        mail = send_email_mock.call_args[0][1]
+        assert mail['From'] == 'Berker Peksag <sender@example.com>'
+        assert mail['To'] == 'recipient@example.com'
+        assert mail['Subject'] == 'Update .gitignore'
+        assert '(cherry picked from commit 9d9ed0e5cceef45fd63dc1f7b3fe6e695da16e83)' not in mail['Subject']
+        body = mail.get_body().as_string()
+        # TODO: We probably need a FakeDiff object to avoid making HTTP requests.
+        assert diff in body
+
 
 
 async def test_github_as_committer(loop):
@@ -140,8 +147,9 @@ async def test_github_as_committer(loop):
     client = aiohttp.ClientSession(loop=loop)
     request = make_request('POST', '/', data=data, loop=loop)
     event = mailer.PushEvent(client, smtp, request)
-    resp = await event.process()
-    assert resp == 'Ok'
-    assert len(smtp.sent_mails) == 1
-    mail = smtp.sent_mails[0]
-    assert mail['From'] == 'cbiggles <sender@example.com>'
+    with mock.patch("tasks.send_email_task.delay") as send_email_mock:
+        await event.process()
+        send_email_mock.assert_called_once()
+
+        mail = send_email_mock.call_args[0][1]
+        assert mail['From'] == 'cbiggles <sender@example.com>'

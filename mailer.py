@@ -12,14 +12,13 @@ import aiohttp
 import aiohttp.web
 import aiosmtplib
 
+from tasks import send_email_task
 
 ALLOWED_BRANCHES_CRE = re.compile(r'^(\d\.\d+|main|master)$')
 SENDER = os.environ.get("SENDER_EMAIL", "sender@example.com")
 RECIPIENT = os.environ.get("RECIPIENT_EMAIL", "recipient@example.com")
 SMTP_HOSTNAME = os.environ.get('SMTP_HOSTNAME', "localhost")
 SMTP_PORT = int(os.environ.get('SMTP_PORT', 1025))
-SMTP_USERNAME = os.environ.get('SMTP_USERNAME')
-SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD')
 PORT = int(os.environ.get('PORT', 8585))
 
 class ResponseExit(Exception):
@@ -82,16 +81,6 @@ async def fetch_diff(client, url):
         return (await response.text())
 
 
-async def send_email(smtp, message):
-    async with smtp as server:
-        await server.connect()
-        # Call ehlo() as a workaround for cole/aiosmtplib/#13.
-        await server.ehlo()
-        if SMTP_USERNAME is not None and SMTP_PASSWORD is not None:
-            await server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        return (await server.send_message(message))
-
-
 class PushEvent:
 
     def __init__(self, client, smtp, request):
@@ -116,16 +105,15 @@ class PushEvent:
         diff_stat = get_diff_stat(commit)
         message = build_message(commit, branch=branch_name, diff_stat=diff_stat,
                                 unified_diff=unified_diff)
-        _, response = await send_email(self.smtp, message)
-        return response
+        send_email_task.delay(self.smtp, message)
 
 
 def create_handler(create_client, smtp_client):
     async def handler(request):
         async with create_client() as client, smtp_client() as smtp:
             try:
-                result = await PushEvent(client, smtp, request).process()
-                return aiohttp.web.Response(status=http.HTTPStatus.OK, text=result)
+                await PushEvent(client, smtp, request).process()
+                return aiohttp.web.Response(status=http.HTTPStatus.OK)
             except ResponseExit as exc:
                 return exc.response
             except Exception as exc:

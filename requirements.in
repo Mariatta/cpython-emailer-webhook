@@ -1,3 +1,6 @@
 # XXX: Somewhere after 2.x, aiohttp made a change that breaks our tests
 aiohttp<3
 aiosmtplib
+celery
+redis
+cachetools
